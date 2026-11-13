@@ -1,13 +1,19 @@
-name: Test dirham rate
+name: Publish dirham rate
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: publish-dirham-rate
+  cancel-in-progress: false
 
 jobs:
-  test-rate:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,5 +21,71 @@ jobs:
       - name: Install parser
         run: python3 -m pip install beautifulsoup4
 
-      - name: Read rate from DHS_Dirham
-        run: python3 read_rate.py
+      - name: Read rate and publish new posts
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from contextlib import redirect_stdout
+          from io import StringIO
+          from pathlib import Path
+          from urllib.error import HTTPError, URLError
+          from urllib.request import Request, urlopen
+
+          from read_rate import read_rate
+
+          state = Path(".last-dhs-post")
+          output = StringIO()
+          with redirect_stdout(output):
+              rate = read_rate()
+
+          prefix = "Source post: https://t.me/DHS_Dirham/"
+          post_id = next(
+              (line[len(prefix):].strip() for line in output.getvalue().splitlines()
+               if line.startswith(prefix)),
+              "",
+          )
+          if not post_id.isascii() or not post_id.isdecimal():
+              raise SystemExit("Could not identify the source post.")
+
+          if state.exists() and int(post_id) <= int(state.read_text().strip()):
+              print("No new source post.")
+              raise SystemExit(0)
+
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+          if not token:
+              raise SystemExit("TELEGRAM_BOT_TOKEN is missing in Eagleaed-rate.")
+
+          message = f"نرخ این لحظه‌ی ما برای هر درهم {rate + 500:,} تومان"
+          request = Request(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=json.dumps({"chat_id": "@eagleaed", "text": message}).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+          )
+          try:
+              with urlopen(request, timeout=20) as response:
+                  result = json.load(response)
+          except HTTPError as error:
+              raise SystemExit(f"Telegram returned HTTP {error.code}.") from None
+          except URLError:
+              raise SystemExit("Could not reach Telegram.") from None
+
+          if not result.get("ok"):
+              raise SystemExit("Telegram did not confirm the message.")
+
+          state.write_text(post_id + "\n")
+          print(f"Published source post {post_id}: {message}")
+          PY
+
+      - name: Save last published post
+        run: |
+          if [ -z "$(git status --porcelain -- .last-dhs-post)" ]; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .last-dhs-post
+          git commit -m "Save last published DHS post"
+          git push
