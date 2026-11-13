@@ -21,7 +21,7 @@ jobs:
       - name: Install parser
         run: python3 -m pip install beautifulsoup4
 
-      - name: Read rate and publish new posts
+      - name: Read rate and publish only when it changes
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
@@ -43,22 +43,34 @@ jobs:
 
           prefix = "Source post: https://t.me/DHS_Dirham/"
           post_id = next(
-              (line[len(prefix):].strip() for line in output.getvalue().splitlines()
-               if line.startswith(prefix)),
+              (
+                  line[len(prefix):].strip()
+                  for line in output.getvalue().splitlines()
+                  if line.startswith(prefix)
+              ),
               "",
           )
           if not post_id.isascii() or not post_id.isdecimal():
               raise SystemExit("Could not identify the source post.")
 
-          if state.exists() and int(post_id) <= int(state.read_text().strip()):
+          final_rate = rate + 500
+          message = f"نرخ این لحظه‌ی ما برای هر درهم: {final_rate:,} تومان"
+
+          saved = state.read_text(encoding="utf-8").split() if state.exists() else []
+          if saved and int(post_id) <= int(saved[0]):
               print("No new source post.")
+              raise SystemExit(0)
+
+          new_state = f"{post_id}\n{final_rate}\n"
+          if len(saved) > 1 and final_rate == int(saved[1]):
+              state.write_text(new_state, encoding="utf-8")
+              print("Rate unchanged.")
               raise SystemExit(0)
 
           token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
           if not token:
               raise SystemExit("TELEGRAM_BOT_TOKEN is missing in Eagleaed-rate.")
 
-          message = f"نرخ این لحظه‌ی ما برای هر درهم {rate + 500:,} تومان"
           request = Request(
               f"https://api.telegram.org/bot{token}/sendMessage",
               data=json.dumps({"chat_id": "@eagleaed", "text": message}).encode("utf-8"),
@@ -75,11 +87,11 @@ jobs:
           if not result.get("ok"):
               raise SystemExit("Telegram did not confirm the message.")
 
-          state.write_text(post_id + "\n")
+          state.write_text(new_state, encoding="utf-8")
           print(f"Published source post {post_id}: {message}")
           PY
 
-      - name: Save last published post
+      - name: Save last checked post and rate
         run: |
           if [ -z "$(git status --porcelain -- .last-dhs-post)" ]; then
             exit 0
@@ -87,5 +99,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .last-dhs-post
-          git commit -m "Save last published DHS post"
+          git commit -m "Save last checked DHS post and rate"
           git push
