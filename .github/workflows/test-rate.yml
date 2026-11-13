@@ -1,0 +1,19 @@
+name: Test dirham rate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-rate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install parser
+        run: python3 -m pip install beautifulsoup4
+
+      - name: Read rate from DHS_Dirham
+        run: python3 read_rate.py
