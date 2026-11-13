@@ -18,6 +18,9 @@ def read_rate():
     for post in reversed(posts):
         match = RATE_PATTERN.search(post.get_text(" ", strip=True))
         if match:
+            message = post.find_parent(attrs={"data-post": True})
+            if message:
+                print(f"Source post: https://t.me/{message['data-post']}")
             return int(match.group(1).replace(",", ""))
 
     raise SystemExit("No matching dirham rate found.")
