@@ -1,29 +1,50 @@
 import re
+import unicodedata
+from time import time_ns
 from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
 
 SOURCE_URL = "https://t.me/s/DHS_Dirham"
 RATE_PATTERN = re.compile(
-    r"#𝐃𝐢𝐫𝐡𝐚𝐦_𝐃𝐇𝐒\s*🇦🇪\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})\s*🇦🇪"
+    r"#Dirham_DHS\s*🇦🇪\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})\s*🇦🇪",
+    re.IGNORECASE,
 )
+POST_PATTERN = re.compile(r"DHS_Dirham/([0-9]+)", re.IGNORECASE)
 
 
 def read_rate():
-    request = Request(SOURCE_URL, headers={"User-Agent": "Mozilla/5.0"})
+    request = Request(
+        f"{SOURCE_URL}?_={time_ns()}",
+        headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"},
+    )
     with urlopen(request, timeout=20) as response:
         page = BeautifulSoup(response.read(), "html.parser")
 
-    posts = page.select(".tgme_widget_message_text")
-    for post in reversed(posts):
-        match = RATE_PATTERN.search(post.get_text(" ", strip=True))
-        if match:
-            message = post.find_parent(attrs={"data-post": True})
-            if message:
-                print(f"Source post: https://t.me/{message['data-post']}")
-            return int(match.group(1).replace(",", ""))
+    latest_post_id = 0
+    latest_rate = None
 
-    raise SystemExit("No matching dirham rate found.")
+    for post in page.select(".tgme_widget_message_text"):
+        text = unicodedata.normalize("NFKC", post.get_text(" ", strip=True))
+        rate_match = RATE_PATTERN.search(text)
+        message = post.find_parent(attrs={"data-post": True})
+        if not rate_match or message is None:
+            continue
+
+        post_match = POST_PATTERN.fullmatch(message["data-post"])
+        if not post_match:
+            continue
+
+        post_id = int(post_match.group(1))
+        if post_id > latest_post_id:
+            latest_post_id = post_id
+            latest_rate = int(rate_match.group(1).replace(",", ""))
+
+    if latest_rate is None:
+        raise SystemExit("No matching dirham rate found.")
+
+    print(f"Source post: https://t.me/DHS_Dirham/{latest_post_id}")
+    return latest_rate
 
 
 if __name__ == "__main__":
